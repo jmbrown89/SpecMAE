@@ -1,0 +1,45 @@
+dataset:
+  name: pathmnist
+  root: data/raw
+  image_size: 28
+
+training:
+  batch_size: 32
+  epochs: 3
+  learning_rate: 0.001
+  limit_samples: 256
+  num_workers: 0
+  device: cpu
+  seed: 7
+
+masking:
+  method: image_patch
+  policy: random
+  mask_ratio: 0.6
+  image_patch_size: 4
+
+curriculum:
+  mode: none
+  mask_ratio_start: 0.35
+  mask_ratio_end: 0.8
+
+loss:
+  kind: mse
+  mse_weight: 1.0
+  l1_weight: 1.0
+
+artifacts:
+  root: outputs/runs
+  run_name: medmnist_2d_baseline_mae
+  save_checkpoints: true
+  checkpoint_every: 1
+  save_examples_every: 1
+  examples_dir: ""
+
+early_stopping:
+  enabled: false
+  patience: 5
+  min_delta: 0.0
+
+evaluation:
+  restore_best_at_end: true

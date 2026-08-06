@@ -29,6 +29,7 @@ def main() -> None:
     train_parser.add_argument("-c", "--config", dest="config", default=None, help="Path to training YAML config")
 
     subparsers.add_parser("eval", help="Run reconstruction evaluation")
+    subparsers.add_parser("downstream", help="Run downstream linear-probe evaluation")
 
     matrix_parser = subparsers.add_parser("matrix", help="Run experiment matrix")
     matrix_parser.add_argument(
@@ -54,6 +55,9 @@ def main() -> None:
 
     if args.command == "eval":
         raise SystemExit(_run_module("specmae.evaluation.reconstruction", list(unknown_args)))
+
+    if args.command == "downstream":
+        raise SystemExit(_run_module("specmae.evaluation.downstream", list(unknown_args)))
 
     if args.command == "matrix":
         forwarded = []

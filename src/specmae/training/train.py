@@ -16,6 +16,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from specmae.data.medmnist import MedMNISTConfig, create_medmnist_dataloader
+from specmae.masking.image import apply_random_patch_mask
 from specmae.models.mae import TinyAutoencoder
 from specmae.spectral.inverse import corrupt_images_in_spectral_domain
 from specmae.spectral.mask import SpectralMaskConfig
@@ -57,6 +58,8 @@ class TrainingConfig:
 	learning_rate: float = 1e-3
 	mask_ratio: float = 0.6
 	mask_policy: str = "high_frequency_first"
+	pretext_method: str = "spectral"
+	image_patch_size: int = 4
 	curriculum_mode: str = "none"
 	curriculum_mask_ratio_start: float = 0.35
 	curriculum_mask_ratio_end: float = 0.8
@@ -86,12 +89,29 @@ def _extract_images(batch: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
 	return images
 
 
+def _corrupt_for_pretext(
+	images: torch.Tensor,
+	mask_config: SpectralMaskConfig,
+	pretext_method: str,
+	image_patch_size: int,
+) -> torch.Tensor:
+	if pretext_method == "spectral":
+		corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+		return corrupted
+	if pretext_method == "image_patch":
+		corrupted, _ = apply_random_patch_mask(images=images, mask_ratio=mask_config.mask_ratio, patch_size=image_patch_size)
+		return corrupted
+	raise ValueError(f"Unknown pretext_method: {pretext_method}")
+
+
 def train_one_epoch(
 	model: nn.Module,
 	dataloader: DataLoader,
 	optimizer: torch.optim.Optimizer,
 	device: torch.device,
 	mask_config: SpectralMaskConfig,
+	pretext_method: str = "spectral",
+	image_patch_size: int = 4,
 	loss_config: LossConfig | None = None,
 ) -> float:
 	"""Train one epoch and return average loss."""
@@ -103,7 +123,12 @@ def train_one_epoch(
 
 	for batch in dataloader:
 		images = _extract_images(batch).to(device)
-		corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+		corrupted = _corrupt_for_pretext(
+			images=images,
+			mask_config=mask_config,
+			pretext_method=pretext_method,
+			image_patch_size=image_patch_size,
+		)
 
 		prediction = model(corrupted)
 		loss = compute_reconstruction_loss(prediction, images, loss_config)
@@ -124,6 +149,8 @@ def evaluate_reconstruction(
 	dataloader: DataLoader,
 	device: torch.device,
 	mask_config: SpectralMaskConfig,
+	pretext_method: str = "spectral",
+	image_patch_size: int = 4,
 	loss_config: LossConfig | None = None,
 ) -> float:
 	"""Evaluate mean reconstruction loss."""
@@ -135,7 +162,12 @@ def evaluate_reconstruction(
 
 	for batch in dataloader:
 		images = _extract_images(batch).to(device)
-		corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+		corrupted = _corrupt_for_pretext(
+			images=images,
+			mask_config=mask_config,
+			pretext_method=pretext_method,
+			image_patch_size=image_patch_size,
+		)
 		prediction = model(corrupted)
 		loss = compute_reconstruction_loss(prediction, images, loss_config)
 		total_loss += loss.item()
@@ -150,6 +182,8 @@ def evaluate_reconstruction_metrics(
 	dataloader: DataLoader,
 	device: torch.device,
 	mask_config: SpectralMaskConfig,
+	pretext_method: str = "spectral",
+	image_patch_size: int = 4,
 	loss_config: LossConfig | None = None,
 ) -> Dict[str, float]:
 	"""Evaluate reconstruction loss plus PSNR/SSIM/spectral-band errors."""
@@ -167,7 +201,12 @@ def evaluate_reconstruction_metrics(
 
 	for batch in dataloader:
 		images = _extract_images(batch).to(device)
-		corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+		corrupted = _corrupt_for_pretext(
+			images=images,
+			mask_config=mask_config,
+			pretext_method=pretext_method,
+			image_patch_size=image_patch_size,
+		)
 		prediction = model(corrupted)
 
 		loss = compute_reconstruction_loss(prediction, images, loss_config)
@@ -201,6 +240,8 @@ def _save_reconstruction_preview(
 	dataloader: DataLoader,
 	device: torch.device,
 	mask_config: SpectralMaskConfig,
+	pretext_method: str,
+	image_patch_size: int,
 	epoch: int,
 	output_dir: str,
 ) -> None:
@@ -213,7 +254,12 @@ def _save_reconstruction_preview(
 
 	batch = next(iter(dataloader))
 	images = _extract_images(batch).to(device)
-	corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+	corrupted = _corrupt_for_pretext(
+		images=images,
+		mask_config=mask_config,
+		pretext_method=pretext_method,
+		image_patch_size=image_patch_size,
+	)
 	recon = model(corrupted)
 
 	n = min(4, images.shape[0])
@@ -381,6 +427,7 @@ def _save_run_report(
 		"",
 		f"- Run directory: {run_dir}",
 		f"- Dataset: {config.dataset_name}",
+		f"- Pretext method: {config.pretext_method}",
 		f"- Best epoch: {best_epoch}",
 		f"- Best val loss: {best_val_loss:.6f}",
 		f"- Stopped early: {stopped_early}",
@@ -531,6 +578,8 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 				optimizer,
 				device,
 				epoch_mask_config,
+				pretext_method=config.pretext_method,
+				image_patch_size=config.image_patch_size,
 				loss_config=loss_config,
 			)
 			global_step += len(train_loader)
@@ -545,7 +594,12 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			for batch in train_loader:
 				step_mask_config = scheduler.config_at(epoch=epoch, global_step=global_step)
 				images = _extract_images(batch).to(device)
-				corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=step_mask_config)
+				corrupted = _corrupt_for_pretext(
+					images=images,
+					mask_config=step_mask_config,
+					pretext_method=config.pretext_method,
+					image_patch_size=config.image_patch_size,
+				)
 				prediction = model(corrupted)
 				loss = compute_reconstruction_loss(prediction, images, loss_config)
 
@@ -568,6 +622,8 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			eval_loader,
 			device,
 			eval_mask_config,
+			pretext_method=config.pretext_method,
+			image_patch_size=config.image_patch_size,
 			loss_config=loss_config,
 		)
 		if last_val_loss < (best_val_loss - config.early_stopping_min_delta):
@@ -618,6 +674,8 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 				dataloader=eval_loader,
 				device=device,
 				mask_config=eval_mask_config,
+				pretext_method=config.pretext_method,
+				image_patch_size=config.image_patch_size,
 				epoch=epoch,
 				output_dir=str(examples_dir),
 			)
@@ -672,7 +730,15 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			LOGGER.warning("best checkpoint missing at end of run: %s", best_checkpoint_path)
 
 	eval_mask_config = scheduler.config_at(epoch=eval_epoch_index, global_step=global_step)
-	final_metrics = evaluate_reconstruction_metrics(model, eval_loader, device, eval_mask_config, loss_config=loss_config)
+	final_metrics = evaluate_reconstruction_metrics(
+		model,
+		eval_loader,
+		device,
+		eval_mask_config,
+		pretext_method=config.pretext_method,
+		image_patch_size=config.image_patch_size,
+		loss_config=loss_config,
+	)
 	val_loss = float(final_metrics["reconstruction_loss"])
 	LOGGER.info(
 		"val_reconstruction_loss=%.6f val_psnr=%.4f val_ssim=%.4f spectral_low=%.6f spectral_mid=%.6f spectral_high=%.6f",
@@ -714,6 +780,8 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 
 	summary = {
 		"run_dir": str(run_dir),
+		"pretext_method": config.pretext_method,
+		"image_patch_size": int(config.image_patch_size),
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss if best_epoch >= 0 else val_loss),
 		"stopped_early": stopped_early,
@@ -816,6 +884,10 @@ def parse_args() -> TrainingConfig:
 			flat["mask_policy"] = masking["policy"]
 		if "mask_ratio" in masking:
 			flat["mask_ratio"] = masking["mask_ratio"]
+		if "method" in masking:
+			flat["pretext_method"] = masking["method"]
+		if "image_patch_size" in masking:
+			flat["image_patch_size"] = masking["image_patch_size"]
 
 		if "mode" in curriculum:
 			flat["curriculum_mode"] = curriculum["mode"]
@@ -870,6 +942,8 @@ def parse_args() -> TrainingConfig:
 		choices=["high_frequency_first", "low_frequency_first", "radial", "random", "high_freq", "mid_freq", "low_freq"],
 		default=None,
 	)
+	parser.add_argument("--pretext-method", choices=["spectral", "image_patch"], default=None)
+	parser.add_argument("--image-patch-size", type=int, default=None)
 	parser.add_argument("--curriculum-mode", choices=["none", "linear", "epoch", "step"], default=None)
 	parser.add_argument("--curriculum-mask-start", type=float, default=None)
 	parser.add_argument("--curriculum-mask-end", type=float, default=None)
@@ -908,6 +982,8 @@ def parse_args() -> TrainingConfig:
 		"learning_rate": args.lr,
 		"mask_ratio": args.mask_ratio,
 		"mask_policy": args.mask_policy,
+		"pretext_method": args.pretext_method,
+		"image_patch_size": args.image_patch_size,
 		"curriculum_mode": args.curriculum_mode,
 		"curriculum_mask_ratio_start": args.curriculum_mask_start,
 		"curriculum_mask_ratio_end": args.curriculum_mask_end,

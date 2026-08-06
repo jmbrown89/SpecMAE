@@ -1,0 +1,45 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Test/tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local editor/OS artifacts
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local data and generated artifacts
+data/raw/
+data/processed/
+data/splits/
+outputs/
+
+# Model checkpoints and large binary artifacts
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.joblib
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# Compressed archives and exported bundles
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z

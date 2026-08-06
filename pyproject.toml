@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "specmae"
+version = "0.1.0"
+description = "SpecMAE: spectral-domain masked autoencoding prototype"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+	"numpy>=1.24",
+	"torch>=2.2",
+	"medmnist>=2.2",
+	"matplotlib>=3.8",
+	"pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

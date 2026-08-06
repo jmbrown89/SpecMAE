@@ -1,0 +1,39 @@
+dataset:
+  name: brats
+  root: data/raw
+  image_size: 28
+
+training:
+  batch_size: 8
+  epochs: 1
+  learning_rate: 0.001
+  limit_samples: 32
+  num_workers: 0
+  device: cpu
+  seed: 7
+
+masking:
+  policy: high_frequency_first
+  mask_ratio: 0.6
+
+curriculum:
+  mode: none
+  mask_ratio_start: 0.35
+  mask_ratio_end: 0.8
+
+loss:
+  kind: mse
+  mse_weight: 1.0
+  l1_weight: 1.0
+
+artifacts:
+  root: outputs/runs
+  run_name: brats_placeholder
+  save_checkpoints: true
+  checkpoint_every: 1
+  save_examples_every: 1
+  examples_dir: ""
+
+notes:
+  status: "Placeholder for future BraTS integration"
+

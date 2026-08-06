@@ -10,9 +10,10 @@
 
 ## Evaluation Additions
 
-- [ ] Add PSNR metric to training/evaluation summaries.
-- [ ] Add SSIM metric to training/evaluation summaries.
-- [ ] Add band-wise spectral reconstruction error (low/mid/high frequency bands).
+- [x] Add PSNR metric to training/evaluation summaries.
+- [x] Add SSIM metric to training/evaluation summaries.
+- [x] Add band-wise spectral reconstruction error (low/mid/high frequency bands).
+- [ ] Add checkpoint-based eval CLI flow to report val/test reconstruction from saved checkpoints (for example best_val.pt), with optional checkpoint-config loading.
 
 ## Experiment Follow-Ups
 

@@ -22,6 +22,7 @@ from specmae.spectral.mask import SpectralMaskConfig
 from specmae.training.losses import LossConfig, compute_reconstruction_loss
 from specmae.training.scheduler import CurriculumStage, FixedMaskScheduler, LinearMaskScheduler, SpectralCurriculumScheduler, evenly_split_stage_ends
 from specmae.utils.logging import configure_logging, get_logger
+from specmae.utils.metrics import psnr_metric, spectral_band_mse_metrics, ssim_metric
 from specmae.utils.seed import set_seed
 
 
@@ -141,6 +142,57 @@ def evaluate_reconstruction(
 		batches += 1
 
 	return total_loss / max(batches, 1)
+
+
+@torch.no_grad()
+def evaluate_reconstruction_metrics(
+	model: nn.Module,
+	dataloader: DataLoader,
+	device: torch.device,
+	mask_config: SpectralMaskConfig,
+	loss_config: LossConfig | None = None,
+) -> Dict[str, float]:
+	"""Evaluate reconstruction loss plus PSNR/SSIM/spectral-band errors."""
+	model.eval()
+	if loss_config is None:
+		loss_config = LossConfig(kind="mse")
+
+	total_loss = 0.0
+	total_psnr = 0.0
+	total_ssim = 0.0
+	total_spec_low = 0.0
+	total_spec_mid = 0.0
+	total_spec_high = 0.0
+	batches = 0
+
+	for batch in dataloader:
+		images = _extract_images(batch).to(device)
+		corrupted, _ = corrupt_images_in_spectral_domain(images=images, mask_config=mask_config)
+		prediction = model(corrupted)
+
+		loss = compute_reconstruction_loss(prediction, images, loss_config)
+		prediction_clamped = prediction.clamp(0.0, 1.0)
+		images_clamped = images.clamp(0.0, 1.0)
+
+		spectral = spectral_band_mse_metrics(prediction_clamped, images_clamped)
+
+		total_loss += loss.item()
+		total_psnr += psnr_metric(prediction_clamped, images_clamped)
+		total_ssim += ssim_metric(prediction_clamped, images_clamped)
+		total_spec_low += spectral["low"]
+		total_spec_mid += spectral["mid"]
+		total_spec_high += spectral["high"]
+		batches += 1
+
+	denom = max(batches, 1)
+	return {
+		"reconstruction_loss": total_loss / denom,
+		"psnr": total_psnr / denom,
+		"ssim": total_ssim / denom,
+		"spectral_mse_low": total_spec_low / denom,
+		"spectral_mse_mid": total_spec_mid / denom,
+		"spectral_mse_high": total_spec_high / denom,
+	}
 
 
 @torch.no_grad()
@@ -305,6 +357,7 @@ def _save_run_report(
 	history: Sequence[Dict[str, Any]],
 	best_epoch: int,
 	best_val_loss: float,
+	final_metrics: Dict[str, float],
 	stopped_early: bool,
 	stop_epoch: int,
 	restored_best_at_end: bool,
@@ -333,6 +386,18 @@ def _save_run_report(
 		f"- Stopped early: {stopped_early}",
 		f"- Stop epoch: {stop_epoch}",
 		f"- Restored best checkpoint at end: {restored_best_at_end}",
+		f"- Final val loss: {final_metrics['reconstruction_loss']:.6f}",
+		f"- Final PSNR: {final_metrics['psnr']:.4f} dB",
+		f"- Final SSIM: {final_metrics['ssim']:.4f}",
+		"",
+		"## Final Validation Metrics",
+		"",
+		f"- Reconstruction loss: {final_metrics['reconstruction_loss']:.6f}",
+		f"- PSNR: {final_metrics['psnr']:.4f} dB",
+		f"- SSIM: {final_metrics['ssim']:.4f}",
+		f"- Spectral MSE (low band): {final_metrics['spectral_mse_low']:.6f}",
+		f"- Spectral MSE (mid band): {final_metrics['spectral_mse_mid']:.6f}",
+		f"- Spectral MSE (high band): {final_metrics['spectral_mse_high']:.6f}",
 		"",
 		"## Epoch Summary",
 		"",
@@ -607,8 +672,17 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			LOGGER.warning("best checkpoint missing at end of run: %s", best_checkpoint_path)
 
 	eval_mask_config = scheduler.config_at(epoch=eval_epoch_index, global_step=global_step)
-	val_loss = evaluate_reconstruction(model, eval_loader, device, eval_mask_config, loss_config=loss_config)
-	LOGGER.info("val_reconstruction_loss=%.6f", val_loss)
+	final_metrics = evaluate_reconstruction_metrics(model, eval_loader, device, eval_mask_config, loss_config=loss_config)
+	val_loss = float(final_metrics["reconstruction_loss"])
+	LOGGER.info(
+		"val_reconstruction_loss=%.6f val_psnr=%.4f val_ssim=%.4f spectral_low=%.6f spectral_mid=%.6f spectral_high=%.6f",
+		val_loss,
+		final_metrics["psnr"],
+		final_metrics["ssim"],
+		final_metrics["spectral_mse_low"],
+		final_metrics["spectral_mse_mid"],
+		final_metrics["spectral_mse_high"],
+	)
 
 	if config.save_checkpoints:
 		_save_checkpoint(
@@ -631,6 +705,7 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 		history=history,
 		best_epoch=best_epoch,
 		best_val_loss=best_val_loss if best_epoch >= 0 else val_loss,
+		final_metrics=final_metrics,
 		stopped_early=stopped_early,
 		stop_epoch=eval_epoch_index,
 		restored_best_at_end=restored_best_at_end,
@@ -645,6 +720,13 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 		"stop_epoch": eval_epoch_index,
 		"restored_best_at_end": restored_best_at_end,
 		"final_val_loss": float(val_loss),
+		"final_psnr": float(final_metrics["psnr"]),
+		"final_ssim": float(final_metrics["ssim"]),
+		"final_spectral_mse": {
+			"low": float(final_metrics["spectral_mse_low"]),
+			"mid": float(final_metrics["spectral_mse_mid"]),
+			"high": float(final_metrics["spectral_mse_high"]),
+		},
 		"final_train_loss": float(last_train_loss),
 		"artifact_paths": {
 			"report": str(run_dir / "report.md"),
@@ -663,15 +745,26 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 	)
 	LOGGER.info("Training report:\n%s", table)
 	LOGGER.info(
-		"Validation summary: split=val policy=%s mask_ratio=%.4f val_reconstruction_loss=%.6f loss_kind=%s",
+		"Validation summary: split=val policy=%s mask_ratio=%.4f val_reconstruction_loss=%.6f val_psnr=%.4f val_ssim=%.4f loss_kind=%s",
 		eval_mask_config.policy,
 		eval_mask_config.mask_ratio,
 		val_loss,
+		final_metrics["psnr"],
+		final_metrics["ssim"],
 		config.loss_kind,
 	)
 	LOGGER.info("run_artifacts_saved=%s", run_dir)
 
-	return {"train_loss": last_train_loss, "val_reconstruction_loss": val_loss, "run_dir": str(run_dir)}
+	return {
+		"train_loss": last_train_loss,
+		"val_reconstruction_loss": val_loss,
+		"val_psnr": float(final_metrics["psnr"]),
+		"val_ssim": float(final_metrics["ssim"]),
+		"val_spectral_mse_low": float(final_metrics["spectral_mse_low"]),
+		"val_spectral_mse_mid": float(final_metrics["spectral_mse_mid"]),
+		"val_spectral_mse_high": float(final_metrics["spectral_mse_high"]),
+		"run_dir": str(run_dir),
+	}
 
 
 def parse_args() -> TrainingConfig:

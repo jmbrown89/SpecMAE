@@ -10,7 +10,7 @@ from specmae.data.medmnist import MedMNISTConfig, create_medmnist_dataloader
 from specmae.models.mae import TinyAutoencoder
 from specmae.spectral.mask import SpectralMaskConfig
 from specmae.training.losses import LossConfig
-from specmae.training.train import evaluate_reconstruction
+from specmae.training.train import evaluate_reconstruction_metrics
 from specmae.utils.logging import configure_logging, get_logger
 
 
@@ -53,14 +53,22 @@ def main() -> None:
 	first_batch = next(iter(loader))
 	channels = first_batch[0].shape[1]
 	model = TinyAutoencoder(in_channels=channels).to(device)
-	loss = evaluate_reconstruction(
+	metrics = evaluate_reconstruction_metrics(
 		model=model,
 		dataloader=loader,
 		device=device,
 		mask_config=SpectralMaskConfig(policy=args.mask_policy, mask_ratio=args.mask_ratio),
 		loss_config=LossConfig(kind=args.loss_kind, mse_weight=args.loss_mse_weight, l1_weight=args.loss_l1_weight),
 	)
-	LOGGER.info("test_reconstruction_loss=%.6f", loss)
+	LOGGER.info(
+		"test_metrics loss=%.6f psnr=%.4f ssim=%.4f spectral_low=%.6f spectral_mid=%.6f spectral_high=%.6f",
+		metrics["reconstruction_loss"],
+		metrics["psnr"],
+		metrics["ssim"],
+		metrics["spectral_mse_low"],
+		metrics["spectral_mse_mid"],
+		metrics["spectral_mse_high"],
+	)
 
 
 if __name__ == "__main__":

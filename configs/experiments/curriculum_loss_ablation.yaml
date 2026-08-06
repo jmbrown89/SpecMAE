@@ -10,7 +10,7 @@ shared_overrides:
   epochs: 30
   batch_size: 32
   checkpoint_every: 5
-  save_examples_every: 0
+  save_examples_every: 5
   early_stopping: true
   early_stopping_patience: 5
   early_stopping_min_delta: 0.00001

@@ -21,6 +21,9 @@ dev = [
 	"pytest>=8.0",
 ]
 
+[project.scripts]
+specmae = "specmae.cli:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

@@ -1,0 +1,62 @@
+base_config: configs/medmnist_2d.yaml
+artifacts_root: outputs/runs
+results_root: outputs/experiments
+run_prefix: curriculum_dataset_transfer
+
+seeds: [7, 13, 23]
+
+shared_overrides:
+  epochs: 30
+  batch_size: 32
+  checkpoint_every: 5
+  save_examples_every: 0
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.00001
+  restore_best_at_end: true
+
+conditions:
+  - name: path_fixed_070
+    overrides:
+      dataset: pathmnist
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+
+  - name: path_linear_025_070
+    overrides:
+      dataset: pathmnist
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70
+
+  - name: pneumo_fixed_070
+    overrides:
+      dataset: pneumoniamnist
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+
+  - name: pneumo_linear_025_070
+    overrides:
+      dataset: pneumoniamnist
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70
+
+  - name: oct_fixed_070
+    overrides:
+      dataset: octmnist
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+
+  - name: oct_linear_025_070
+    overrides:
+      dataset: octmnist
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70

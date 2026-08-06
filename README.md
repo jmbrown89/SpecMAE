@@ -34,6 +34,12 @@ pip install -r requirements.txt
 python -m specmae.training.train --dataset pathmnist --epochs 1 --limit-samples 256 --mask-policy high_frequency_first --mask-ratio 0.6
 ```
 
+Top-level CLI equivalent:
+
+```bash
+specmae train -c configs/medmnist_2d.yaml
+```
+
 Config-driven training:
 
 ```bash
@@ -52,6 +58,12 @@ The first run downloads MedMNIST files to `data/raw`.
 
 ```bash
 python -m specmae.evaluation.reconstruction --dataset pathmnist --limit-samples 128 --mask-policy high_frequency_first --mask-ratio 0.6
+```
+
+Top-level CLI equivalent:
+
+```bash
+specmae eval --dataset pathmnist --limit-samples 128 --mask-policy high_frequency_first --mask-ratio 0.6
 ```
 
 ## Masking And Curriculum Options
@@ -95,6 +107,32 @@ Useful options:
 - `--save-examples-every 1`
 - `--examples-dir <path>`
 - `--no-save-checkpoints`
+
+## Experiment Matrix Runner
+
+To run seeded ablations and generate a combined leaderboard:
+
+```bash
+python scripts/run_experiment_matrix.py --matrix configs/experiments/curriculum_matrix.yaml
+```
+
+Top-level CLI equivalent:
+
+```bash
+specmae matrix -m configs/experiments/curriculum_matrix.yaml
+```
+
+For a quick smoke version:
+
+```bash
+python scripts/run_experiment_matrix.py --matrix configs/experiments/curriculum_matrix_smoke.yaml
+```
+
+Outputs are written to `outputs/experiments/` as:
+
+- `*_detailed.csv` (per run)
+- `*_leaderboard.csv` (aggregated by condition)
+- `*_summary.md` (human-readable ranking)
 
 ## How This Differs From PMAE
 

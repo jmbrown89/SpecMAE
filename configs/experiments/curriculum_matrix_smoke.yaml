@@ -1,0 +1,32 @@
+base_config: configs/medmnist_2d.yaml
+artifacts_root: outputs/runs
+results_root: outputs/experiments
+run_prefix: curriculum_matrix_smoke
+
+seeds: [7, 13]
+
+shared_overrides:
+  dataset: pneumoniamnist
+  epochs: 2
+  limit_samples: 64
+  batch_size: 32
+  checkpoint_every: 1
+  save_examples_every: 0
+  early_stopping: true
+  early_stopping_patience: 2
+  early_stopping_min_delta: 0.00001
+  restore_best_at_end: true
+
+conditions:
+  - name: fixed_070
+    overrides:
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+
+  - name: linear_025_070
+    overrides:
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70

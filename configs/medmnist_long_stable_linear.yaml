@@ -1,5 +1,5 @@
 dataset:
-  name: pathmnist
+  name: pneumoniamnist
   root: data/raw
   image_size: 28
 
@@ -7,7 +7,7 @@ training:
   batch_size: 32
   epochs: 30
   learning_rate: 0.001
-  limit_samples: 256
+  # limit_samples: 256
   num_workers: 0
   device: cpu
   seed: 7
@@ -28,8 +28,16 @@ loss:
 
 artifacts:
   root: outputs/runs
-  run_name: long_stable_linear_30ep
+  run_name: long_stable_linear_no_limit
   save_checkpoints: true
   checkpoint_every: 5
   save_examples_every: 5
   examples_dir: ""
+
+early_stopping:
+  enabled: true
+  patience: 5
+  min_delta: 0.00001
+
+evaluation:
+  restore_best_at_end: true

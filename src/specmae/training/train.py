@@ -68,6 +68,10 @@ class TrainingConfig:
 	checkpoint_every: int = 1
 	save_examples_every: int = 1
 	examples_dir_override: str = ""
+	early_stopping_enabled: bool = False
+	early_stopping_patience: int = 5
+	early_stopping_min_delta: float = 0.0
+	restore_best_at_end: bool = True
 	limit_samples: int = 256
 	num_workers: int = 0
 	seed: int = 7
@@ -301,6 +305,9 @@ def _save_run_report(
 	history: Sequence[Dict[str, Any]],
 	best_epoch: int,
 	best_val_loss: float,
+	stopped_early: bool,
+	stop_epoch: int,
+	restored_best_at_end: bool,
 	config: TrainingConfig,
 ) -> None:
 	"""Write a compact markdown report for fast run review."""
@@ -323,6 +330,9 @@ def _save_run_report(
 		f"- Dataset: {config.dataset_name}",
 		f"- Best epoch: {best_epoch}",
 		f"- Best val loss: {best_val_loss:.6f}",
+		f"- Stopped early: {stopped_early}",
+		f"- Stop epoch: {stop_epoch}",
+		f"- Restored best checkpoint at end: {restored_best_at_end}",
 		"",
 		"## Epoch Summary",
 		"",
@@ -442,7 +452,11 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 	last_val_loss = 0.0
 	best_val_loss = float("inf")
 	best_epoch = -1
+	stopped_early = False
+	stop_epoch = max(0, config.epochs - 1)
+	no_improvement_epochs = 0
 	global_step = 0
+	restored_best_at_end = False
 	for epoch in range(config.epochs):
 		if config.curriculum_mode != "step":
 			epoch_mask_config = scheduler.config_at(epoch=epoch, global_step=global_step)
@@ -491,9 +505,10 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			eval_mask_config,
 			loss_config=loss_config,
 		)
-		if last_val_loss < best_val_loss:
+		if last_val_loss < (best_val_loss - config.early_stopping_min_delta):
 			best_val_loss = last_val_loss
 			best_epoch = epoch
+			no_improvement_epochs = 0
 			if config.save_checkpoints:
 				_save_checkpoint(
 					path=checkpoints_dir / "best_val.pt",
@@ -507,6 +522,8 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 					mask_ratio=epoch_mask_ratio,
 					config=config,
 				)
+		else:
+			no_improvement_epochs += 1
 		LOGGER.info(
 			"epoch=%d policy=%s mask_ratio=%.4f train_loss=%.6f val_loss=%.6f",
 			epoch,
@@ -560,7 +577,36 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			]
 		)
 
-	eval_mask_config = scheduler.config_at(epoch=max(0, config.epochs - 1), global_step=global_step)
+		if config.early_stopping_enabled and no_improvement_epochs >= config.early_stopping_patience:
+			stopped_early = True
+			stop_epoch = epoch
+			LOGGER.info(
+				"early_stopping_triggered=true epoch=%d best_epoch=%d best_val_loss=%.6f patience=%d min_delta=%.8f",
+				epoch,
+				best_epoch,
+				best_val_loss,
+				config.early_stopping_patience,
+				config.early_stopping_min_delta,
+			)
+			break
+
+	eval_epoch_index = stop_epoch if stopped_early else max(0, config.epochs - 1)
+	if config.restore_best_at_end and config.save_checkpoints and best_epoch >= 0:
+		best_checkpoint_path = checkpoints_dir / "best_val.pt"
+		if best_checkpoint_path.exists():
+			checkpoint = torch.load(best_checkpoint_path, map_location=device)
+			model.load_state_dict(checkpoint["model_state_dict"])
+			restored_best_at_end = True
+			LOGGER.info(
+				"restored_best_checkpoint=true path=%s best_epoch=%d best_val_loss=%.6f",
+				best_checkpoint_path,
+				best_epoch,
+				best_val_loss,
+			)
+		else:
+			LOGGER.warning("best checkpoint missing at end of run: %s", best_checkpoint_path)
+
+	eval_mask_config = scheduler.config_at(epoch=eval_epoch_index, global_step=global_step)
 	val_loss = evaluate_reconstruction(model, eval_loader, device, eval_mask_config, loss_config=loss_config)
 	LOGGER.info("val_reconstruction_loss=%.6f", val_loss)
 
@@ -569,7 +615,7 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 			path=checkpoints_dir / "last.pt",
 			model=model,
 			optimizer=optimizer,
-			epoch=max(0, config.epochs - 1),
+			epoch=eval_epoch_index,
 			global_step=global_step,
 			train_loss=last_train_loss,
 			val_loss=val_loss,
@@ -585,6 +631,9 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 		history=history,
 		best_epoch=best_epoch,
 		best_val_loss=best_val_loss if best_epoch >= 0 else val_loss,
+		stopped_early=stopped_early,
+		stop_epoch=eval_epoch_index,
+		restored_best_at_end=restored_best_at_end,
 		config=config,
 	)
 
@@ -592,6 +641,9 @@ def run_training(config: TrainingConfig) -> Dict[str, float]:
 		"run_dir": str(run_dir),
 		"best_epoch": best_epoch,
 		"best_val_loss": float(best_val_loss if best_epoch >= 0 else val_loss),
+		"stopped_early": stopped_early,
+		"stop_epoch": eval_epoch_index,
+		"restored_best_at_end": restored_best_at_end,
 		"final_val_loss": float(val_loss),
 		"final_train_loss": float(last_train_loss),
 		"artifact_paths": {
@@ -642,6 +694,8 @@ def parse_args() -> TrainingConfig:
 		curriculum = raw.get("curriculum", {}) if isinstance(raw.get("curriculum", {}), dict) else {}
 		loss = raw.get("loss", {}) if isinstance(raw.get("loss", {}), dict) else {}
 		artifacts = raw.get("artifacts", {}) if isinstance(raw.get("artifacts", {}), dict) else {}
+		early_stopping = raw.get("early_stopping", {}) if isinstance(raw.get("early_stopping", {}), dict) else {}
+		evaluation = raw.get("evaluation", {}) if isinstance(raw.get("evaluation", {}), dict) else {}
 
 		if "name" in dataset:
 			flat["dataset_name"] = dataset["name"]
@@ -697,6 +751,16 @@ def parse_args() -> TrainingConfig:
 		if "examples_dir" in artifacts:
 			flat["examples_dir_override"] = artifacts["examples_dir"]
 
+		if "enabled" in early_stopping:
+			flat["early_stopping_enabled"] = early_stopping["enabled"]
+		if "patience" in early_stopping:
+			flat["early_stopping_patience"] = early_stopping["patience"]
+		if "min_delta" in early_stopping:
+			flat["early_stopping_min_delta"] = early_stopping["min_delta"]
+
+		if "restore_best_at_end" in evaluation:
+			flat["restore_best_at_end"] = evaluation["restore_best_at_end"]
+
 		return flat
 
 	parser = argparse.ArgumentParser(description="Train SpecMAE prototype")
@@ -726,6 +790,10 @@ def parse_args() -> TrainingConfig:
 	parser.add_argument("--checkpoint-every", type=int, default=None)
 	parser.add_argument("--save-examples-every", type=int, default=None)
 	parser.add_argument("--examples-dir", default=None)
+	parser.add_argument("--early-stopping", action=argparse.BooleanOptionalAction, default=None)
+	parser.add_argument("--early-stopping-patience", type=int, default=None)
+	parser.add_argument("--early-stopping-min-delta", type=float, default=None)
+	parser.add_argument("--restore-best-at-end", action=argparse.BooleanOptionalAction, default=None)
 	parser.add_argument("--limit-samples", type=int, default=None)
 	parser.add_argument("--num-workers", type=int, default=None)
 	parser.add_argument("--seed", type=int, default=None)
@@ -758,6 +826,10 @@ def parse_args() -> TrainingConfig:
 		"checkpoint_every": args.checkpoint_every,
 		"save_examples_every": args.save_examples_every,
 		"examples_dir_override": args.examples_dir,
+		"early_stopping_enabled": args.early_stopping,
+		"early_stopping_patience": args.early_stopping_patience,
+		"early_stopping_min_delta": args.early_stopping_min_delta,
+		"restore_best_at_end": args.restore_best_at_end,
 		"limit_samples": args.limit_samples,
 		"num_workers": args.num_workers,
 		"seed": args.seed,

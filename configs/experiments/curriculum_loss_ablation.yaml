@@ -1,0 +1,52 @@
+base_config: configs/medmnist_2d.yaml
+artifacts_root: outputs/runs
+results_root: outputs/experiments
+run_prefix: curriculum_loss_ablation
+
+seeds: [7, 13, 23, 31, 43]
+
+shared_overrides:
+  dataset: pneumoniamnist
+  epochs: 30
+  batch_size: 32
+  checkpoint_every: 5
+  save_examples_every: 0
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.00001
+  restore_best_at_end: true
+
+conditions:
+  - name: linear_mse
+    overrides:
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70
+      loss_kind: mse
+
+  - name: linear_combined
+    overrides:
+      curriculum_mode: linear
+      mask_policy: high_frequency_first
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70
+      loss_kind: combined
+      loss_mse_weight: 1.0
+      loss_l1_weight: 0.25
+
+  - name: fixed_mse
+    overrides:
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+      loss_kind: mse
+
+  - name: fixed_combined
+    overrides:
+      curriculum_mode: none
+      mask_policy: high_frequency_first
+      mask_ratio: 0.70
+      loss_kind: combined
+      loss_mse_weight: 1.0
+      loss_l1_weight: 0.25

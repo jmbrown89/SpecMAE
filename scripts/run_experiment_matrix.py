@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import statistics
 import subprocess
 import sys
@@ -45,6 +46,20 @@ def _run_command(cmd: List[str], cwd: Path) -> None:
     subprocess.run(cmd, cwd=str(cwd), check=True)
 
 
+def _summary_to_row(summary: Dict[str, Any], condition: str, seed: int) -> Dict[str, Any]:
+    return {
+        "condition": condition,
+        "seed": seed,
+        "best_epoch": summary.get("best_epoch"),
+        "best_val_loss": summary.get("best_val_loss"),
+        "final_val_loss": summary.get("final_val_loss"),
+        "stopped_early": summary.get("stopped_early"),
+        "stop_epoch": summary.get("stop_epoch"),
+        "restored_best_at_end": summary.get("restored_best_at_end"),
+        "run_dir": summary.get("run_dir"),
+    }
+
+
 def _extract_timestamp_from_run_dir(name: str) -> str:
     # Run directories end with a timestamp suffix: YYYYMMDD_HHMMSS.
     parts = name.rsplit("_", 2)
@@ -57,19 +72,17 @@ def _extract_timestamp_from_run_dir(name: str) -> str:
     return ""
 
 
-def _find_existing_summary_for_combo(
-    artifacts_root_abs: Path,
-    run_prefix: str,
-    condition_name: str,
-    seed: int,
-) -> Path | None:
-    pattern = f"{run_prefix}_{condition_name}_seed{seed}_*"
-    candidates = sorted(artifacts_root_abs.glob(pattern), reverse=True)
-    for run_dir in candidates:
-        summary = run_dir / "metrics" / "summary.json"
-        if summary.exists():
-            return summary
-    return None
+def _find_latest_run_id(artifacts_root_abs: Path, run_prefix: str) -> str | None:
+    latest: str | None = None
+    for run_dir in artifacts_root_abs.glob(f"{run_prefix}_*"):
+        if not run_dir.is_dir():
+            continue
+        ts = _extract_timestamp_from_run_dir(run_dir.name)
+        if not ts:
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    return latest
 
 
 def _safe_mean(values: Iterable[float]) -> float:
@@ -109,11 +122,19 @@ def run_matrix(
 
     results_root_abs.mkdir(parents=True, exist_ok=True)
     artifacts_root_abs.mkdir(parents=True, exist_ok=True)
-    timestamp = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    if resume:
-        mode = "run-id" if run_id else "existing summaries"
-        print(f"Resume mode enabled ({mode}). Completed jobs will be skipped when possible.")
+    selected_run_id = run_id
+    if resume and not selected_run_id:
+        selected_run_id = _find_latest_run_id(artifacts_root_abs=artifacts_root_abs, run_prefix=run_prefix)
+        if selected_run_id:
+            print(f"Resume mode enabled. Auto-detected latest run-id: {selected_run_id}")
+        else:
+            print("Resume mode enabled, but no existing run-id found. Starting a fresh batch.")
+
+    timestamp = selected_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if resume and selected_run_id:
+        print("Completed jobs in this batch will be skipped; only missing runs will execute.")
 
     detailed_rows: List[Dict[str, Any]] = []
 
@@ -122,31 +143,6 @@ def run_matrix(
         cond_overrides = dict(condition.get("overrides", {}))
 
         for seed in seeds:
-            if resume and not run_id:
-                existing_summary = _find_existing_summary_for_combo(
-                    artifacts_root_abs=artifacts_root_abs,
-                    run_prefix=run_prefix,
-                    condition_name=name,
-                    seed=seed,
-                )
-                if existing_summary is not None:
-                    summary = json.loads(existing_summary.read_text(encoding="utf-8"))
-                    detailed_rows.append(
-                        {
-                            "condition": name,
-                            "seed": seed,
-                            "best_epoch": summary.get("best_epoch"),
-                            "best_val_loss": summary.get("best_val_loss"),
-                            "final_val_loss": summary.get("final_val_loss"),
-                            "stopped_early": summary.get("stopped_early"),
-                            "stop_epoch": summary.get("stop_epoch"),
-                            "restored_best_at_end": summary.get("restored_best_at_end"),
-                            "run_dir": summary.get("run_dir"),
-                        }
-                    )
-                    print(f"[resume] Reusing existing summary for condition={name} seed={seed}: {existing_summary}")
-                    continue
-
             run_name = f"{run_prefix}_{name}_seed{seed}_{timestamp}"
             overrides = dict(shared_overrides)
             overrides.update(cond_overrides)
@@ -163,48 +159,38 @@ def run_matrix(
             ]
             cmd.extend(_to_cli_args(overrides))
 
-            if resume and run_id:
-                summary_path = repo_root / artifacts_root / run_name / "metrics" / "summary.json"
+            run_dir = repo_root / artifacts_root / run_name
+            summary_path = run_dir / "metrics" / "summary.json"
+
+            if resume:
                 if summary_path.exists():
                     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                    detailed_rows.append(
-                        {
-                            "condition": name,
-                            "seed": seed,
-                            "best_epoch": summary.get("best_epoch"),
-                            "best_val_loss": summary.get("best_val_loss"),
-                            "final_val_loss": summary.get("final_val_loss"),
-                            "stopped_early": summary.get("stopped_early"),
-                            "stop_epoch": summary.get("stop_epoch"),
-                            "restored_best_at_end": summary.get("restored_best_at_end"),
-                            "run_dir": summary.get("run_dir"),
-                        }
-                    )
+                    detailed_rows.append(_summary_to_row(summary, condition=name, seed=seed))
                     print(f"[resume] Reusing existing summary for run={run_name}")
                     continue
+                if run_dir.exists():
+                    # Interrupted runs can leave behind partial folders without summary.json.
+                    # Clean them so resume can re-run this job deterministically.
+                    print(f"[resume] Found partial run without summary, resetting: {run_dir}")
+                    shutil.rmtree(run_dir, ignore_errors=True)
 
             _run_command(cmd, cwd=repo_root)
 
-            summary_path = repo_root / artifacts_root / run_name / "metrics" / "summary.json"
             if not summary_path.exists():
-                raise FileNotFoundError(f"Missing summary file: {summary_path}")
+                if resume:
+                    print(f"[resume] Missing summary after first attempt, retrying once: {run_name}")
+                    shutil.rmtree(run_dir, ignore_errors=True)
+                    _run_command(cmd, cwd=repo_root)
+                if not summary_path.exists():
+                    raise FileNotFoundError(
+                        f"Missing summary file after run attempt(s): {summary_path}. "
+                        "This usually means training was interrupted before final artifact write."
+                    )
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            detailed_rows.append(
-                {
-                    "condition": name,
-                    "seed": seed,
-                    "best_epoch": summary.get("best_epoch"),
-                    "best_val_loss": summary.get("best_val_loss"),
-                    "final_val_loss": summary.get("final_val_loss"),
-                    "stopped_early": summary.get("stopped_early"),
-                    "stop_epoch": summary.get("stop_epoch"),
-                    "restored_best_at_end": summary.get("restored_best_at_end"),
-                    "run_dir": summary.get("run_dir"),
-                }
-            )
+            detailed_rows.append(_summary_to_row(summary, condition=name, seed=seed))
 
-    output_timestamp = run_id or timestamp
+    output_timestamp = selected_run_id or timestamp
     detailed_csv = results_root_abs / f"{run_prefix}_{output_timestamp}_detailed.csv"
     with detailed_csv.open("w", newline="", encoding="utf-8") as handle:
         fieldnames = [

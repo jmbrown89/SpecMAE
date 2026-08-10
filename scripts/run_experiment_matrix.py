@@ -11,7 +11,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -97,6 +97,41 @@ def _safe_stdev(values: Iterable[float]) -> float:
     return statistics.stdev(vals)
 
 
+def _cleanup_options(raw: Any) -> Tuple[bool, bool]:
+    """Return cleanup options for run artifacts and result files."""
+    if isinstance(raw, bool):
+        return raw, raw
+    if not isinstance(raw, dict):
+        return False, False
+    return bool(raw.get("run_artifacts", False)), bool(raw.get("result_files", False))
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _cleanup_paths(paths: Iterable[Path], allowed_root: Path) -> int:
+    """Delete files or directories, limited to one resolved output root."""
+    root = allowed_root.resolve()
+    deleted = 0
+    for path in paths:
+        target = path.resolve()
+        if target == root or not _is_relative_to(target, root):
+            raise ValueError(f"Refusing to clean path outside output root: {target}")
+        if not target.exists():
+            continue
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        deleted += 1
+    return deleted
+
+
 def run_matrix(
     matrix_path: Path,
     repo_root: Path,
@@ -113,6 +148,7 @@ def run_matrix(
     seeds = list(matrix.get("seeds", [7]))
     shared_overrides = dict(matrix.get("shared_overrides", {}))
     conditions = list(matrix.get("conditions", []))
+    cleanup_run_artifacts, cleanup_result_files = _cleanup_options(matrix.get("cleanup_outputs", False))
 
     if not conditions:
         raise ValueError("No conditions defined in matrix YAML.")
@@ -137,6 +173,7 @@ def run_matrix(
         print("Completed jobs in this batch will be skipped; only missing runs will execute.")
 
     detailed_rows: List[Dict[str, Any]] = []
+    run_dirs_for_cleanup: List[Path] = []
 
     for condition in conditions:
         name = str(condition["name"])
@@ -161,6 +198,8 @@ def run_matrix(
 
             run_dir = repo_root / artifacts_root / run_name
             summary_path = run_dir / "metrics" / "summary.json"
+            if cleanup_run_artifacts:
+                run_dirs_for_cleanup.append(run_dir)
 
             if resume:
                 if summary_path.exists():
@@ -265,10 +304,23 @@ def run_matrix(
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
 
+    result_files = [detailed_csv, leaderboard_csv, report_path]
+    deleted_run_dirs = 0
+    deleted_result_files = 0
+    if cleanup_run_artifacts:
+        deleted_run_dirs = _cleanup_paths(run_dirs_for_cleanup, allowed_root=artifacts_root_abs)
+    if cleanup_result_files:
+        deleted_result_files = _cleanup_paths(result_files, allowed_root=results_root_abs)
+
     print("\nMatrix complete.")
-    print(f"Detailed: {detailed_csv}")
-    print(f"Leaderboard: {leaderboard_csv}")
-    print(f"Summary: {report_path}")
+    if cleanup_result_files:
+        print(f"Cleaned result files: {deleted_result_files}")
+    else:
+        print(f"Detailed: {detailed_csv}")
+        print(f"Leaderboard: {leaderboard_csv}")
+        print(f"Summary: {report_path}")
+    if cleanup_run_artifacts:
+        print(f"Cleaned run artifact directories: {deleted_run_dirs}")
 
 
 def main() -> None:

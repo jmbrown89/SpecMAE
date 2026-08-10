@@ -2,6 +2,9 @@ base_config: configs/medmnist_2d.yaml
 artifacts_root: outputs/runs
 results_root: outputs/experiments
 run_prefix: curriculum_matrix_smoke
+cleanup_outputs:
+  run_artifacts: true
+  result_files: true
 
 seeds: [7, 13]
 

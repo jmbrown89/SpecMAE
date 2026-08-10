@@ -128,6 +128,14 @@ For a quick smoke version:
 python scripts/run_experiment_matrix.py --matrix configs/experiments/curriculum_matrix_smoke.yaml
 ```
 
+Smoke matrices clean their generated run artifacts and result files after a successful run.
+
+To sweep the image-patch baseline across several spatial masking hardness levels:
+
+```bash
+python scripts/run_experiment_matrix.py --matrix configs/experiments/image_patch_hardness_sweep.yaml
+```
+
 Outputs are written to `outputs/experiments/` as:
 
 - `*_detailed.csv` (per run)

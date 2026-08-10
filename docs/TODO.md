@@ -20,5 +20,6 @@
 ## Experiment Follow-Ups
 
 - [ ] Run hardness sweep matrix and summarize mean/std by condition.
+- [ ] Run image-patch hardness sweep and choose reconstruction-matched baseline settings.
 - [ ] Run cross-dataset transfer matrix (pathmnist, pneumoniamnist, octmnist).
 - [ ] Run loss ablation matrix (mse vs combined) and compare effect size.

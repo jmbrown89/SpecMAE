@@ -1,0 +1,76 @@
+base_config: configs/medmnist_2d.yaml
+artifacts_root: outputs/runs
+results_root: outputs/experiments
+run_prefix: image_patch_hardness_sweep
+
+seeds: [7, 13, 23]
+
+shared_overrides:
+  dataset: pneumoniamnist
+  pretext_method: image_patch
+  image_patch_size: 4
+  mask_policy: random
+  epochs: 30
+  batch_size: 32
+  checkpoint_every: 5
+  save_examples_every: 5
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.00001
+  restore_best_at_end: true
+
+conditions:
+  - name: fixed_025
+    overrides:
+      curriculum_mode: none
+      mask_ratio: 0.25
+
+  - name: fixed_040
+    overrides:
+      curriculum_mode: none
+      mask_ratio: 0.40
+
+  - name: fixed_055
+    overrides:
+      curriculum_mode: none
+      mask_ratio: 0.55
+
+  - name: fixed_070
+    overrides:
+      curriculum_mode: none
+      mask_ratio: 0.70
+
+  - name: fixed_085
+    overrides:
+      curriculum_mode: none
+      mask_ratio: 0.85
+
+  - name: linear_010_025
+    overrides:
+      curriculum_mode: linear
+      curriculum_mask_start: 0.10
+      curriculum_mask_end: 0.25
+
+  - name: linear_010_040
+    overrides:
+      curriculum_mode: linear
+      curriculum_mask_start: 0.10
+      curriculum_mask_end: 0.40
+
+  - name: linear_015_055
+    overrides:
+      curriculum_mode: linear
+      curriculum_mask_start: 0.15
+      curriculum_mask_end: 0.55
+
+  - name: linear_025_070
+    overrides:
+      curriculum_mode: linear
+      curriculum_mask_start: 0.25
+      curriculum_mask_end: 0.70
+
+  - name: linear_030_085
+    overrides:
+      curriculum_mode: linear
+      curriculum_mask_start: 0.30
+      curriculum_mask_end: 0.85
